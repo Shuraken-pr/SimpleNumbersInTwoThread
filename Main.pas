@@ -59,33 +59,7 @@ begin
   Result := True;
 end;
 
-procedure GeneratePrimes(ThreadID: Integer; LocalPrimes: TList<Integer>);
-var
-  i: Integer;
-begin
-    // Сохраняем уникальные простые числа в общий список
-  for i := 2 to max_number do
-  begin
-    if IsPrime(i) then
-    begin
-      CriticalSection.Enter;
-      try
-      //дадим поработать второму потоку.
-        if ThreadID = 1 then
-          sleep(10);
-        if not PrimesList.Contains(i) then
-        begin
-          LocalPrimes.Add(i);
-          PrimesList.Add(i);
-        end;
-      finally
-        CriticalSection.Leave;
-      end;
-    end;
-  end;
-end;
-
-procedure GeneratePrimesFromList(IntList, localList: TList<integer>);
+procedure GeneratePrimesFromList(IntList, localList: TList<integer>; const ALocalFile: TextFile);
 var
   curNum: integer;
 begin
@@ -105,6 +79,8 @@ begin
     begin
       CriticalSection.Enter;
       try
+        WriteLn(ALocalFile, curNum);
+        WriteLn(ResultFile, curNum);
         localList.Add(curNum);
         PrimesList.Add(curNum);
       finally
@@ -114,27 +90,45 @@ begin
   end;
 end;
 
+function CheckOpenFile(const AFile: TextFile; AFileName: string): boolean;
+begin
+  Result := true;
+  AssignFile(AFile, AFileName);
+  try
+    Rewrite(AFile); // Создаем (или очищаем) файл
+  except
+    Result := false;
+  end;
+end;
+
 procedure TForm1.btnStartClick(Sender: TObject);
+const
+  fmtMessage = 'Вычисление простых чисел от 2 до %d завершено. Время выполнения: %s';
 var
+  delta: TDateTime;
   local1, local2, NumList: TList<Integer>;
-  i, num: integer;
+  i: integer;
 begin
   if TryStrToInt(edNum.Text, max_number) then
   begin
+    if max_number <= 2 then
+      exit;
+    delta := Now;
     NumList := TList<integer>.Create;
     try
       for i := 2 to max_number do
+        if i div 2 <> 0 then
         NumList.Add(i);
       mThread1.Lines.Clear;
       mThread2.Lines.Clear;
       mResult.Lines.Clear;
 
-      AssignFile(ResultFile, 'Result.txt');
-      Rewrite(ResultFile); // Создаем (или очищаем) файл
-      AssignFile(Thread1File, 'Thread1.txt');
-      Rewrite(Thread1File); // Создаем (или очищаем) файл
-      AssignFile(Thread2File, 'Thread2.txt');
-      Rewrite(Thread2File); // Создаем (или очищаем) файл
+      if not CheckOpenFile(ResultFile, 'Result.txt') then
+        exit;
+      if not CheckOpenFile(Thread1File, 'Thread1.txt') then
+        exit;
+      if not CheckOpenFile(Thread2File, 'Thread2.txt') then
+        exit;
 
       PrimesList := TList<Integer>.Create;
       local1 := TList<Integer>.Create;
@@ -145,14 +139,14 @@ begin
         var Task1 := TTask.Run(
           procedure
           begin
-            GeneratePrimesFromList(NumList, local1);
+            GeneratePrimesFromList(NumList, local1, Thread1File);
           end
         );
 
         var Task2 := TTask.Run(
           procedure
           begin
-            GeneratePrimesFromList(NumList, local2);
+            GeneratePrimesFromList(NumList, local2, Thread2File);
           end
         );
 
@@ -160,23 +154,6 @@ begin
         Task1.Wait;
         Task2.Wait;
 
-        // Записываем уникальные простые числа в файл
-        for num in PrimesList do
-        begin
-          mResult.Lines.Add(IntToStr(num));
-          WriteLn(ResultFile, num);
-        end;
-
-        for num in Local1 do
-        begin
-          mThread1.Lines.Add(IntToStr(num));
-          WriteLn(Thread1File, num);
-        end;
-        for num in Local2 do
-        begin
-          mThread2.Lines.Add(IntToStr(num));
-          WriteLn(Thread2File, num);
-        end;
       finally
         CriticalSection.Free;
         local1.Free;
@@ -187,7 +164,11 @@ begin
         CloseFile(Thread2File);
       end;
     finally
+      mResult.Lines.LoadFromFile('Result.txt');
+      mThread1.Lines.LoadFromFile('Thread1.txt');
+      mThread2.Lines.LoadFromFile('Thread2.txt');
       FreeAndNil(NumList);
+      ShowMessage(Format(fmtMessage, [max_number, FormatDateTime('hh:nn:ss.zzz', Now - delta)]));
     end;
   end;
 end;
